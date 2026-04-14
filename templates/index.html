@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgriSetu Dashboard</title>
+</head>
+<body>
+
+<h2>🌱 AgriSetu Live Dashboard</h2>
+
+<button onclick="getData()">Get Prediction</button>
+
+<p id="result"></p>
+
+<script>
+async function getData() {
+
+  // Replace with your ThingESP API or ESP JSON
+  let sensorData = {
+    soil: 55,
+    temp: 28
+  };
+
+  let res = await fetch("https://your-render-url.onrender.com/predict", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(sensorData)
+  });
+
+  let data = await res.json();
+
+  document.getElementById("result").innerHTML =
+    "🌾 Recommended Crop: " + data.crop;
+}
+</script>
+
+</body>
+</html>
