@@ -1,0 +1,7 @@
+This directory contains ML model files:
+- crop_model.pkl
+- label_encoder.pkl
+- month_model.pkl
+- crop_month_lookup.pkl
+
+Place your trained model files here before deployment.
