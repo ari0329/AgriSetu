@@ -1,101 +1,61 @@
-from flask import Flask, request, jsonify
-import joblib
-import pandas as pd
+from flask import Flask, request
+from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
 import os
 
-# ================== INIT ==================
+from thingesp_client import get_sensor_data
+from pdf_generator import generate_pdf
+
 app = Flask(__name__)
 
-# ================== LOAD MODELS ==================
-crop_model = joblib.load("crop_model.pkl")
-label_encoder = joblib.load("label_encoder.pkl")
+# Twilio credentials
+ACCOUNT_SID = os.getenv("TWILIO_SID")
+AUTH_TOKEN = os.getenv("TWILIO_AUTH")
+FROM_WHATSAPP = "whatsapp:+14155238886"  # sandbox
 
-FEATURE_COLUMNS = [
-    "Soil_Moisture_%",
-    "Soil_Temperature_C",
-    "Rainfall_ml",
-    "Air_Temperature_C",
-    "Humidity_%"
-]
+client = Client(ACCOUNT_SID, AUTH_TOKEN)
 
-# ================== TWILIO CONFIG (SAFE) ==================
-account_sid = os.getenv("TWILIO_SID")
-auth_token = os.getenv("TWILIO_AUTH")
-twilio_number = os.getenv("TWILIO_NUMBER")
-user_number = os.getenv("USER_NUMBER")
+# ================== WEBHOOK ==================
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp():
+    incoming_msg = request.values.get("Body", "").lower()
+    sender = request.values.get("From")
 
-twilio_enabled = False
+    resp = MessagingResponse()
 
-if all([account_sid, auth_token, twilio_number, user_number]):
-    try:
-        from twilio.rest import Client
-        client = Client(account_sid, auth_token)
-        twilio_enabled = True
-        print("✅ Twilio initialized")
-    except Exception as e:
-        print("⚠️ Twilio init failed:", e)
-else:
-    print("⚠️ Twilio credentials missing. SMS disabled.")
+    if "prediction" in incoming_msg:
+        try:
+            # 1. Fetch real-time data
+            sensor_data = get_sensor_data()
 
-# ================== ROUTES ==================
-@app.route("/")
-def home():
-    return "🌱 AgriSetu API Running Successfully!"
+            # 2. Generate PDF
+            pdf_file, crop = generate_pdf(sensor_data)
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    try:
-        data = request.json
+            # 3. Send PDF via Twilio
+            message = client.messages.create(
+                from_=FROM_WHATSAPP,
+                to=sender,
+                body=f"🌱 Crop Recommendation: {crop}",
+                media_url=[f"{os.getenv('BASE_URL')}/{pdf_file}"]
+            )
 
-        soil = float(data.get("soil", 0))
-        temp = float(data.get("temp", 0))
+            return "OK"
 
-        # Dummy environmental values (you can replace later)
-        rainfall = 100
-        air_temp = 30
-        humidity = 60
+        except Exception as e:
+            resp.message("❌ Error generating report")
+            print(e)
+            return str(resp)
 
-        sample = pd.DataFrame([{
-            "Soil_Moisture_%": soil,
-            "Soil_Temperature_C": temp,
-            "Rainfall_ml": rainfall,
-            "Air_Temperature_C": air_temp,
-            "Humidity_%": humidity
-        }])
+    else:
+        resp.message("Send 'prediction' to get crop report 🌱")
+        return str(resp)
 
-        # ================== PREDICTION ==================
-        pred = crop_model.predict(sample)
-        crop = label_encoder.inverse_transform(pred)[0]
+# ================== SERVE FILE ==================
+@app.route("/<filename>")
+def serve_file(filename):
+    return open(filename, "rb").read()
 
-        # ================== TWILIO ALERT ==================
-        if twilio_enabled:
-            message_body = f"🌱 AgriSetu Alert\nRecommended Crop: {crop}\nSoil: {soil}"
-
-            try:
-                client.messages.create(
-                    body=message_body,
-                    from_=twilio_number,
-                    to=user_number
-                )
-                print("📩 SMS sent")
-            except Exception as e:
-                print("⚠️ SMS failed:", e)
-
-        # ================== RESPONSE ==================
-        return jsonify({
-            "status": "success",
-            "crop": crop,
-            "soil": soil,
-            "temperature": temp
-        })
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        })
-
-# ================== RUN SERVER ==================
+# ================== RUN ==================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
