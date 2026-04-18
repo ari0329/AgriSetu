@@ -10,6 +10,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Tuple, Optional
 
+# ===== NUMPY COMPATIBILITY FIX =====
+import numpy
+if not hasattr(numpy, '_core'):
+    numpy._core = numpy.core
+
+# ===== SCIPY COMPATIBILITY FIX =====
+import scipy
+if not hasattr(scipy, '_lib'):
+    scipy._lib = scipy.lib
+
+# ===== SUPPRESS VERSION WARNINGS =====
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+
+# Continue with rest of imports
 import joblib
 import pandas as pd
 from reportlab.lib import colors
@@ -47,31 +62,96 @@ class PDFGenerator:
         self._load_models()
     
     def _load_models(self):
-        """Load ML models from disk"""
+        """Load ML models from disk with compatibility fixes"""
         try:
-            if Config.CROP_MODEL_PATH.exists():
-                self.crop_model = joblib.load(Config.CROP_MODEL_PATH)
-                logger.info("✅ Crop model loaded")
+            # Suppress sklearn version warnings
+            import warnings
+            warnings.filterwarnings('ignore', category=UserWarning)
             
-            if Config.LABEL_ENCODER_PATH.exists():
-                self.label_encoder = joblib.load(Config.LABEL_ENCODER_PATH)
-                logger.info("✅ Label encoder loaded")
+            logger.info(f"🔍 Looking for models in: {Config.MODEL_DIR.absolute()}")
+            logger.info(f"📁 Models directory exists: {Config.MODEL_DIR.exists()}")
             
-            if Config.MONTH_MODEL_PATH.exists():
-                self.month_model = joblib.load(Config.MONTH_MODEL_PATH)
-                logger.info("✅ Month model loaded")
+            if Config.MODEL_DIR.exists():
+                files = list(Config.MODEL_DIR.glob("*.pkl"))
+                logger.info(f"📄 Found {len(files)} .pkl files: {[f.name for f in files]}")
             
-            if Config.MONTH_LOOKUP_PATH.exists():
-                self.month_lookup = joblib.load(Config.MONTH_LOOKUP_PATH)
-                logger.info("✅ Month lookup loaded")
+            # Check each model file individually
+            crop_exists = Config.CROP_MODEL_PATH.exists()
+            label_exists = Config.LABEL_ENCODER_PATH.exists()
+            month_exists = Config.MONTH_MODEL_PATH.exists()
+            lookup_exists = Config.MONTH_LOOKUP_PATH.exists()
             
-            if self.crop_model and self.label_encoder:
+            logger.info(f"crop_model.pkl exists: {crop_exists}")
+            logger.info(f"label_encoder.pkl exists: {label_exists}")
+            logger.info(f"month_model.pkl exists: {month_exists}")
+            logger.info(f"crop_month_lookup.pkl exists: {lookup_exists}")
+            
+            # Load crop model
+            if crop_exists:
+                try:
+                    self.crop_model = joblib.load(Config.CROP_MODEL_PATH)
+                    logger.info("✅ Crop model loaded successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load crop model: {e}")
+                    self.crop_model = None
+            
+            # Load label encoder
+            if label_exists:
+                try:
+                    self.label_encoder = joblib.load(Config.LABEL_ENCODER_PATH)
+                    logger.info("✅ Label encoder loaded successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load label encoder: {e}")
+                    self.label_encoder = None
+            
+            # Load month model
+            if month_exists:
+                try:
+                    self.month_model = joblib.load(Config.MONTH_MODEL_PATH)
+                    logger.info("✅ Month model loaded successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load month model: {e}")
+                    self.month_model = None
+            
+            # Load month lookup
+            if lookup_exists:
+                try:
+                    self.month_lookup = joblib.load(Config.MONTH_LOOKUP_PATH)
+                    logger.info(f"✅ Month lookup loaded successfully with {len(self.month_lookup)} crops")
+                except Exception as e:
+                    logger.error(f"Failed to load month lookup: {e}")
+                    self.month_lookup = {}
+            
+            # Check if models are loaded
+            if self.crop_model is not None and self.label_encoder is not None:
                 self.models_loaded = True
-            else:
-                logger.warning("⚠️ ML models not found, using fallback predictions")
+                logger.info("✅ All models loaded successfully! Using ML predictions.")
                 
+                # Test prediction with sample data to verify models work
+                try:
+                    test_input = pd.DataFrame([{
+                        "Soil_Moisture_%": 50.0,
+                        "Soil_Temperature_C": 25.0,
+                        "Rainfall_ml": 120.0,
+                        "Air_Temperature_C": 30.0,
+                        "Humidity_%": 65.0
+                    }], columns=FEATURE_COLUMNS)
+                    test_pred = self.crop_model.predict(test_input)
+                    logger.info(f"✅ Model test successful - prediction: {self.label_encoder.inverse_transform(test_pred)[0]}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Model test failed: {e}")
+                    self.models_loaded = False
+            else:
+                logger.warning("⚠️ ML models not loaded completely, using fallback predictions")
+                if self.crop_model is None:
+                    logger.warning("  - Crop model missing")
+                if self.label_encoder is None:
+                    logger.warning("  - Label encoder missing")
+            
         except Exception as e:
             logger.error(f"Error loading models: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             self.models_loaded = False
     
     def generate_report(self, sensor_data: Dict) -> Tuple[str, str, str]:
@@ -129,22 +209,28 @@ class PDFGenerator:
     def _predict_with_model(self, sample_input: pd.DataFrame) -> Tuple[str, int]:
         """Make prediction using loaded ML models"""
         try:
+            # Predict crop
             predicted_label = self.crop_model.predict(sample_input)
             crop = self.label_encoder.inverse_transform(predicted_label)[0]
             
             # Predict growth months
             if crop in self.month_lookup:
                 growth_months = int(self.month_lookup[crop])
+                logger.info(f"📊 Using lookup for {crop}: {growth_months} months")
             elif self.month_model:
                 predicted = self.month_model.predict(sample_input)[0]
                 growth_months = max(1, int(round(predicted)))
+                logger.info(f"📊 Using model prediction for {crop}: {growth_months} months")
             else:
-                growth_months = 4  # Default
+                growth_months = 4
+                logger.info(f"📊 Using default for {crop}: {growth_months} months")
                 
             return crop, growth_months
             
         except Exception as e:
             logger.error(f"Prediction error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return self._predict_fallback(sample_input)
     
     def _predict_fallback(self, sample_input: pd.DataFrame) -> Tuple[str, int]:
@@ -164,7 +250,7 @@ class PDFGenerator:
         
         growth_months = 4
         
-        logger.info(f"Fallback prediction: {crop}")
+        logger.info(f"📊 Fallback prediction: {crop} (models not loaded)")
         return crop, growth_months
     
     def _create_pdf(self, file_path: Path, sensor_values: Dict, 
@@ -237,6 +323,12 @@ class PDFGenerator:
         content.append(Paragraph(f"<b>Generated On:</b> {display_time}", normal_style))
         content.append(Paragraph(f"<b>Data Source:</b> {raw_data.get('source', 'Unknown').upper()}", 
                                 normal_style))
+        
+        # Add model status indicator
+        if self.models_loaded:
+            content.append(Paragraph(f"<b>Prediction Mode:</b> AI Model (ML)", normal_style))
+        else:
+            content.append(Paragraph(f"<b>Prediction Mode:</b> Fallback (Rule-based)", normal_style))
         
         # ===== SENSOR DATA SECTION =====
         content.append(Paragraph("📊 SENSOR READINGS", section_style))
