@@ -16,8 +16,8 @@ class Config:
     
     # Flask Settings
     FLASK_ENV = os.getenv('FLASK_ENV', 'production')
-    PORT = int(os.getenv('PORT', 5000))
-    BASE_URL = os.getenv('BASE_URL', 'http://localhost:5000')
+    PORT = int(os.getenv('PORT', 10000))  # Render default port
+    BASE_URL = os.getenv('BASE_URL', 'https://agrisetu-13.onrender.com')
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     
     # Twilio Configuration
@@ -28,9 +28,9 @@ class Config:
     # ThingESP Configuration
     THINGESP_USERNAME = os.getenv('THINGESP_USERNAME', 'Noctum')
     THINGESP_PROJECT = os.getenv('THINGESP_PROJECT', 'Agrisetu')
-    THINGESP_TOKEN = os.getenv('THINGESP_TOKEN')
+    THINGESP_TOKEN = os.getenv('THINGESP_TOKEN')  # Get from environment!
     THINGESP_API_URL = os.getenv('THINGESP_API_URL', 
-        f'https://thingesp.com/api/users/Noctum/projects/Agrisetu/webhooks/twilio?token=bBV87AWa')
+        f'https://thingesp.com/api/users/{THINGESP_USERNAME}/projects/{THINGESP_PROJECT}/webhooks/twilio')
     
     # Model Paths
     MODEL_DIR = Path(__file__).parent / 'models'
@@ -64,7 +64,9 @@ class Config:
                 missing.append(var)
         
         if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+            print(f"⚠️ Missing required environment variables: {', '.join(missing)}")
+            print("Please set them in Render Dashboard > Environment")
+            # Don't raise error on Render - allow fallback
         
         # Create directories if they don't exist
         cls.REPORTS_DIR.mkdir(exist_ok=True)
@@ -73,8 +75,4 @@ class Config:
         return True
 
 # Validate on import
-try:
-    Config.validate()
-except ValueError as e:
-    print(f"⚠️ Configuration Error: {e}")
-    print("Please set the required environment variables.")
+Config.validate()
