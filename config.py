@@ -17,7 +17,7 @@ class Config:
     # Flask Settings
     FLASK_ENV = os.getenv('FLASK_ENV', 'production')
     PORT = int(os.getenv('PORT', 10000))  # Render default port
-    BASE_URL = os.getenv('BASE_URL', 'https://agrisetu-20.onrender.com')
+    BASE_URL = os.getenv('BASE_URL', 'https://agrisetu-21.onrender.com')
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     
     # Twilio Configuration
