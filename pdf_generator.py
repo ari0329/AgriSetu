@@ -58,13 +58,13 @@ class PDFGenerator:
         self.label_encoder = None
         self.month_model = None
         self.month_lookup = {}
+        self.scaler = None          # ← ADDED
         
         self._load_models()
     
     def _load_models(self):
         """Load ML models from disk with compatibility fixes"""
         try:
-            # Suppress sklearn version warnings
             import warnings
             warnings.filterwarnings('ignore', category=UserWarning)
             
@@ -80,11 +80,13 @@ class PDFGenerator:
             label_exists = Config.LABEL_ENCODER_PATH.exists()
             month_exists = Config.MONTH_MODEL_PATH.exists()
             lookup_exists = Config.MONTH_LOOKUP_PATH.exists()
+            scaler_exists = Config.SCALER_PATH.exists()       # ← ADDED
             
             logger.info(f"crop_model.pkl exists: {crop_exists}")
             logger.info(f"label_encoder.pkl exists: {label_exists}")
             logger.info(f"month_model.pkl exists: {month_exists}")
             logger.info(f"crop_month_lookup.pkl exists: {lookup_exists}")
+            logger.info(f"scaler.pkl exists: {scaler_exists}")   # ← ADDED
             
             # Load crop model
             if crop_exists:
@@ -122,7 +124,19 @@ class PDFGenerator:
                     logger.error(f"Failed to load month lookup: {e}")
                     self.month_lookup = {}
             
-            # Check if models are loaded
+            # ← ADDED: Load scaler (optional — used if present)
+            if scaler_exists:
+                try:
+                    self.scaler = joblib.load(Config.SCALER_PATH)
+                    logger.info("✅ Scaler loaded successfully")
+                except Exception as e:
+                    logger.warning(f"⚠️ Scaler load failed (will use raw values): {e}")
+                    self.scaler = None
+            else:
+                logger.warning("⚠️ scaler.pkl not found — predictions use unscaled input")
+                self.scaler = None
+            
+            # Check if core models are loaded
             if self.crop_model is not None and self.label_encoder is not None:
                 self.models_loaded = True
                 logger.info("✅ All models loaded successfully! Using ML predictions.")
@@ -136,7 +150,17 @@ class PDFGenerator:
                         "Air_Temperature_C": 30.0,
                         "Humidity_%": 65.0
                     }], columns=FEATURE_COLUMNS)
-                    test_pred = self.crop_model.predict(test_input)
+                    
+                    # ← ADDED: scale test input if scaler is available
+                    if self.scaler is not None:
+                        test_scaled = pd.DataFrame(
+                            self.scaler.transform(test_input),
+                            columns=FEATURE_COLUMNS
+                        )
+                    else:
+                        test_scaled = test_input
+                    
+                    test_pred = self.crop_model.predict(test_scaled)
                     logger.info(f"✅ Model test successful - prediction: {self.label_encoder.inverse_transform(test_pred)[0]}")
                 except Exception as e:
                     logger.warning(f"⚠️ Model test failed: {e}")
@@ -209,8 +233,19 @@ class PDFGenerator:
     def _predict_with_model(self, sample_input: pd.DataFrame) -> Tuple[str, int]:
         """Make prediction using loaded ML models"""
         try:
-            # Predict crop
-            predicted_label = self.crop_model.predict(sample_input)
+            # ← ADDED: Scale input features if scaler is available
+            if self.scaler is not None:
+                scaled_input = pd.DataFrame(
+                    self.scaler.transform(sample_input),
+                    columns=FEATURE_COLUMNS
+                )
+                logger.info("📐 Input scaled using scaler.pkl")
+            else:
+                scaled_input = sample_input
+                logger.info("📐 Using raw (unscaled) input — scaler not loaded")
+            
+            # Predict crop using scaled input
+            predicted_label = self.crop_model.predict(scaled_input)
             crop = self.label_encoder.inverse_transform(predicted_label)[0]
             
             # Predict growth months
@@ -218,7 +253,7 @@ class PDFGenerator:
                 growth_months = int(self.month_lookup[crop])
                 logger.info(f"📊 Using lookup for {crop}: {growth_months} months")
             elif self.month_model:
-                predicted = self.month_model.predict(sample_input)[0]
+                predicted = self.month_model.predict(scaled_input)[0]
                 growth_months = max(1, int(round(predicted)))
                 logger.info(f"📊 Using model prediction for {crop}: {growth_months} months")
             else:
@@ -235,7 +270,6 @@ class PDFGenerator:
     
     def _predict_fallback(self, sample_input: pd.DataFrame) -> Tuple[str, int]:
         """Fallback prediction when models are unavailable"""
-        # Simple rule-based fallback
         soil_moisture = sample_input['Soil_Moisture_%'].iloc[0]
         soil_temp = sample_input['Soil_Temperature_C'].iloc[0]
         
@@ -269,7 +303,6 @@ class PDFGenerator:
         
         styles = getSampleStyleSheet()
         
-        # Custom styles
         title_style = ParagraphStyle(
             "TitleStyle",
             parent=styles["Title"],
@@ -326,7 +359,8 @@ class PDFGenerator:
         
         # Add model status indicator
         if self.models_loaded:
-            content.append(Paragraph(f"<b>Prediction Mode:</b> AI Model (ML)", normal_style))
+            scaler_status = "with Scaler" if self.scaler is not None else "without Scaler"
+            content.append(Paragraph(f"<b>Prediction Mode:</b> AI Model (ML) — {scaler_status}", normal_style))
         else:
             content.append(Paragraph(f"<b>Prediction Mode:</b> Fallback (Rule-based)", normal_style))
         

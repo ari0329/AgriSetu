@@ -38,6 +38,8 @@ class Config:
     LABEL_ENCODER_PATH = MODEL_DIR / 'label_encoder.pkl'
     MONTH_MODEL_PATH = MODEL_DIR / 'month_model.pkl'
     MONTH_LOOKUP_PATH = MODEL_DIR / 'crop_month_lookup.pkl'
+    SCALER_PATH = MODEL_DIR / 'scaler.pkl'           # ← ADDED: scaler for feature normalization
+    MODEL_METADATA_PATH = MODEL_DIR / 'model_metadata.pkl'  # ← ADDED: optional metadata
     
     # Report Settings
     REPORTS_DIR = Path(__file__).parent / 'reports'
